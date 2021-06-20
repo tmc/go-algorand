@@ -4,8 +4,6 @@ import (
 	"bytes"
 	mathrand "math/rand"
 	"testing"
-
-	"filippo.io/edwards25519"
 )
 
 func BenchmarkCompareCAndGoProofs(b *testing.B) {
@@ -16,16 +14,11 @@ func BenchmarkCompareCAndGoProofs(b *testing.B) {
 	randSource := mathrand.New(mathrand.NewSource(42))
 
 	for i := 0; i < b.N; i++ {
-		validPoint := false
-		for !validPoint {
-			pks[i], sks[i] = VrfKeygen()
-			strs[i] = make([]byte, 100)
-			_, err := randSource.Read(strs[i])
-			if err != nil {
-				panic(err)
-			}
-			_, err = (&edwards25519.Point{}).SetBytes(sks[i][:32])
-			validPoint = err == nil
+		pks[i], sks[i] = VrfKeygen()
+		strs[i] = make([]byte, 100)
+		_, err := randSource.Read(strs[i])
+		if err != nil {
+			panic(err)
 		}
 	}
 

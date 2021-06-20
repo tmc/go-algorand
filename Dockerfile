@@ -25,3 +25,5 @@ RUN make
 RUN go get golang.org/x/perf/cmd/benchstat
 
 RUN cd crypto; go test -v
+
+CMD ['/go/src/app/run-purego-benchmarks.sh']

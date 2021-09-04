@@ -2,6 +2,7 @@ FROM golang:buster
 
 WORKDIR /go/src/app
 COPY go.mod go.sum ./
+COPY crypto/internal/ ./crypto/internal/
 RUN go mod download -x
 RUN apt-get update
 COPY scripts/ ./scripts/

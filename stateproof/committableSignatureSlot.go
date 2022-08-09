@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with go-algorand.  If not, see <https://www.gnu.org/licenses/>.
 
-package compactcert
+package stateproof
 
 import (
 	"encoding/binary"
@@ -34,9 +34,9 @@ type committableSignatureSlot struct {
 // ErrIndexOutOfBound returned when an index is out of the array's bound
 var ErrIndexOutOfBound = errors.New("index is out of bound")
 
-// committableSignatureSlotArray is used to create a merkle tree on the compact cert's
+// committableSignatureSlotArray is used to create a merkle tree on the stateproof's
 // signature array. it serializes the MSS signatures using a specific format
-// compact cert signature array.
+// state proof signature array.
 //msgp:ignore committableSignatureSlotArray
 type committableSignatureSlotArray []sigslot
 
@@ -58,8 +58,11 @@ func (sc committableSignatureSlotArray) Marshal(pos uint64) (crypto.Hashable, er
 }
 
 func buildCommittableSignature(sigCommit sigslotCommit) (*committableSignatureSlot, error) {
-	if sigCommit.Sig.Signature.Signature == nil {
+	if sigCommit.Sig.MsgIsZero() { // Empty merkle signature
 		return &committableSignatureSlot{isEmptySlot: true}, nil
+	}
+	if sigCommit.Sig.Signature == nil { // Merkle signature is not empty, but falcon signature is (invalid case)
+		return nil, fmt.Errorf("buildCommittableSignature: Falcon signature is nil")
 	}
 	sigBytes, err := sigCommit.Sig.GetFixedLengthHashableRepresentation()
 	if err != nil {
@@ -74,14 +77,14 @@ func buildCommittableSignature(sigCommit sigslotCommit) (*committableSignatureSl
 // be bad for creating SNARK
 func (cs *committableSignatureSlot) ToBeHashed() (protocol.HashID, []byte) {
 	if cs.isEmptySlot {
-		return protocol.CompactCertSig, []byte{}
+		return protocol.StateProofSig, []byte{}
 	}
-	binaryLValue := make([]byte, 8)
-	binary.LittleEndian.PutUint64(binaryLValue, cs.sigCommit.L)
+	var binaryLValue [8]byte
+	binary.LittleEndian.PutUint64(binaryLValue[:], cs.sigCommit.L)
 
-	sigSlotCommitment := make([]byte, 0, len(binaryLValue)+len(cs.serializedSignature))
-	sigSlotCommitment = append(sigSlotCommitment, binaryLValue...)
-	sigSlotCommitment = append(sigSlotCommitment, cs.serializedSignature...)
+	sigSlotByteRepresentation := make([]byte, 0, len(binaryLValue)+len(cs.serializedSignature))
+	sigSlotByteRepresentation = append(sigSlotByteRepresentation, binaryLValue[:]...)
+	sigSlotByteRepresentation = append(sigSlotByteRepresentation, cs.serializedSignature...)
 
-	return protocol.CompactCertSig, sigSlotCommitment
+	return protocol.StateProofSig, sigSlotByteRepresentation
 }

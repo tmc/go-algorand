@@ -14,35 +14,41 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with go-algorand.  If not, see <https://www.gnu.org/licenses/>.
 
-package compactcert
+package stateproof
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/crypto/merklearray"
 	"github.com/algorand/go-algorand/crypto/merklesignature"
 	"github.com/algorand/go-algorand/data/basics"
 )
 
-// Params defines common parameters for the verifier and builder.
-type Params struct {
-	Msg          crypto.Hashable // Message to be certified
-	ProvenWeight uint64          // Weight threshold proven by the certificate
-	SigRound     basics.Round    // The round for which the ephemeral key is committed to
-	SecKQ        uint64          // Security parameter (k+q) from analysis document
+// MessageHash represents the message that a state proof will attest to.
+type MessageHash [32]byte
+
+//msgp:ignore sigslot
+type sigslot struct {
+	// Weight is the weight of the participant signing this message.
+	// This information is tracked here for convenience, but it does
+	// not appear in the commitment to the sigs array; it comes from
+	// the Weight field of the corresponding participant.
+	Weight uint64
+
+	// Include the parts of the sigslot that form the commitment to
+	// the sigs array.
+	sigslotCommit
 }
 
-// CompactOneTimeSignature is crypto.OneTimeSignature with omitempty
-type CompactOneTimeSignature struct {
-	_struct struct{} `codec:",omitempty,omitemptyarray"`
-	merklesignature.Signature
-}
-
-// A sigslotCommit is a single slot in the sigs array that forms the certificate.
+// A sigslotCommit is a single slot in the sigs array that forms the state proof.
 type sigslotCommit struct {
 	_struct struct{} `codec:",omitempty,omitemptyarray"`
 
 	// Sig is a signature by the participant on the expected message.
-	Sig CompactOneTimeSignature `codec:"s"`
+	Sig merklesignature.Signature `codec:"s"`
 
 	// L is the total weight of signatures in lower-numbered slots.
 	// This is initialized once the builder has collected a sufficient
@@ -50,8 +56,8 @@ type sigslotCommit struct {
 	L uint64 `codec:"l"`
 }
 
-// Reveal is a single array position revealed as part of a compact
-// certificate.  It reveals an element of the signature array and
+// Reveal is a single array position revealed as part of a state
+// proof.  It reveals an element of the signature array and
 // the corresponding element of the participants array.
 type Reveal struct {
 	_struct struct{} `codec:",omitempty,omitemptyarray"`
@@ -60,19 +66,42 @@ type Reveal struct {
 	Part    basics.Participant `codec:"p"`
 }
 
-// Cert represents a compact certificate.
-type Cert struct {
+// StateProof represents a proof on Algorand's state.
+type StateProof struct {
 	_struct struct{} `codec:",omitempty,omitemptyarray"`
 
-	SigCommit    crypto.GenericDigest `codec:"c"`
-	SignedWeight uint64               `codec:"w"`
-	SigProofs    merklearray.Proof    `codec:"S"`
-	PartProofs   merklearray.Proof    `codec:"P"`
-
+	SigCommit                  crypto.GenericDigest `codec:"c"`
+	SignedWeight               uint64               `codec:"w"`
+	SigProofs                  merklearray.Proof    `codec:"S"`
+	PartProofs                 merklearray.Proof    `codec:"P"`
+	MerkleSignatureSaltVersion byte                 `codec:"v"`
 	// Reveals is a sparse map from the position being revealed
 	// to the corresponding elements from the sigs and participants
 	// arrays.
-	Reveals map[uint64]Reveal `codec:"r,allocbound=MaxReveals"`
+	Reveals           map[uint64]Reveal `codec:"r,allocbound=MaxReveals"`
+	PositionsToReveal []uint64          `codec:"pr,allocbound=MaxReveals"`
+}
+
+func (s StateProof) stringBuild() (b strings.Builder) {
+	b.WriteString("StateProof: {")
+	defer b.WriteRune('}')
+
+	if s.MsgIsZero() {
+		return
+	}
+
+	b.WriteString(fmt.Sprintf("%v", s.SigCommit))
+	b.WriteString(", ")
+	b.WriteString(strconv.FormatUint(s.SignedWeight, 10))
+	b.WriteString(", ")
+	b.WriteString(strconv.Itoa(len(s.PositionsToReveal)))
+
+	return
+}
+
+func (s StateProof) String() string {
+	b := s.stringBuild()
+	return b.String()
 }
 
 // SortUint64 implements sorting by uint64 keys for

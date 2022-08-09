@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with go-algorand.  If not, see <https://www.gnu.org/licenses/>.
 
-package compactcert
+package stateproof
 
 import (
 	"encoding/binary"
@@ -34,29 +34,29 @@ func TestSignatureArrayWithEmptySlot(t *testing.T) {
 	a := require.New(t)
 	sigs := make([]sigslot, 2)
 
-	key := generateTestSigner(0, uint64(compactCertRoundsForTests)*20+1, compactCertRoundsForTests, a)
+	key := generateTestSigner(0, uint64(stateProofIntervalForTests)*20+1, stateProofIntervalForTests, a)
 
 	message := testMessage("hello world")
-	sig, err := key.GetSigner(uint64(256)).Sign(message)
+	sig, err := key.GetSigner(uint64(256)).SignBytes(message)
 	a.NoError(err)
 
 	sigs[0] = sigslot{
 		Weight:        60,
-		sigslotCommit: sigslotCommit{Sig: CompactOneTimeSignature{Signature: sig}, L: 60},
+		sigslotCommit: sigslotCommit{Sig: sig, L: 60},
 	}
 
 	hfactory := crypto.HashFactory{HashType: HashType}
 	tree, err := merklearray.BuildVectorCommitmentTree(committableSignatureSlotArray(sigs), hfactory)
 
 	leftLeafHash := calculateHashOnSigLeaf(t, sig, 60)
-	rightLeafHash := hashBytes(hfactory.NewHash(), []byte(protocol.CompactCertSig))
+	rightLeafHash := hashBytes(hfactory.NewHash(), []byte(protocol.StateProofSig))
 
 	a.Equal([]byte(tree.Root()), calculateHashOnInternalNode(leftLeafHash, rightLeafHash))
 }
 
 func calculateHashOnSigLeaf(t *testing.T, sig merklesignature.Signature, lValue uint64) []byte {
 	var sigCommitment []byte
-	sigCommitment = append(sigCommitment, protocol.CompactCertSig...)
+	sigCommitment = append(sigCommitment, protocol.StateProofSig...)
 
 	binaryL := make([]byte, 8)
 	binary.LittleEndian.PutUint64(binaryL, lValue)
@@ -64,7 +64,7 @@ func calculateHashOnSigLeaf(t *testing.T, sig merklesignature.Signature, lValue 
 	sigCommitment = append(sigCommitment, binaryL...)
 
 	//build the expected binary representation of the merkle signature
-	serializedSig, err := sig.VerifyingKey.GetSignatureFixedLengthHashableRepresentation(sig.Signature)
+	serializedSig, err := sig.Signature.GetFixedLengthHashableRepresentation()
 	require.NoError(t, err)
 
 	schemeType := make([]byte, 2)
@@ -75,7 +75,7 @@ func calculateHashOnSigLeaf(t *testing.T, sig merklesignature.Signature, lValue 
 	sigCommitment = append(sigCommitment, sig.VerifyingKey.GetFixedLengthHashableRepresentation()...)
 
 	treeIdxBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(treeIdxBytes, sig.MerkleArrayIndex)
+	binary.LittleEndian.PutUint64(treeIdxBytes, sig.VectorCommitmentIndex)
 	sigCommitment = append(sigCommitment, treeIdxBytes...)
 
 	//build the expected binary representation of the merkle signature proof

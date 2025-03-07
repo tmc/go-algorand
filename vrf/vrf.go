@@ -14,46 +14,17 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with go-algorand.  If not, see <https://www.gnu.org/licenses/>.
 
+//go:generate go generate ./internal/cgovrf
+
 package crypto
 
-// #cgo CFLAGS: -Wall -std=c99
-// #cgo darwin,amd64 CFLAGS: -I${SRCDIR}/../libs/darwin/amd64/include
-// #cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../libs/darwin/amd64/lib/libsodium.a
-// #cgo darwin,arm64 CFLAGS: -I${SRCDIR}/../libs/darwin/arm64/include
-// #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../libs/darwin/arm64/lib/libsodium.a
-// #cgo linux,amd64 CFLAGS: -I${SRCDIR}/../libs/linux/amd64/include
-// #cgo linux,amd64 LDFLAGS: ${SRCDIR}/../libs/linux/amd64/lib/libsodium.a
-// #cgo linux,arm64 CFLAGS: -I${SRCDIR}/../libs/linux/arm64/include
-// #cgo linux,arm64 LDFLAGS: ${SRCDIR}/../libs/linux/arm64/lib/libsodium.a
-// #cgo linux,arm CFLAGS: -I${SRCDIR}/../libs/linux/arm/include
-// #cgo linux,arm LDFLAGS: ${SRCDIR}/../libs/linux/arm/lib/libsodium.a
-// #cgo windows,amd64 CFLAGS: -I${SRCDIR}/../libs/windows/amd64/include
-// #cgo windows,amd64 LDFLAGS: ${SRCDIR}/../libs/windows/amd64/lib/libsodium.a
-// #include <stdint.h>
-// #include "sodium.h"
-import "C"
+import (
+	"crypto/rand"
+	"io"
+	"sync"
 
-func init() {
-	if C.sodium_init() == -1 {
-		panic("sodium_init() failed")
-	}
-}
-
-// deprecated names + wrappers -- TODO remove
-
-// VRFVerifier is a deprecated name for VrfPubkey
-type VRFVerifier = VrfPubkey
-
-// VRFProof is a deprecated name for VrfProof
-type VRFProof = VrfProof
-
-// VRFSecrets is a wrapper for a VRF keypair. Use *VrfPrivkey instead
-type VRFSecrets struct {
-	_struct struct{} `codec:""`
-
-	PK VrfPubkey
-	SK VrfPrivkey
-}
+	"github.com/tmc/go-algorand/crypto/vrf/internal/cgovrf"
+)
 
 // TODO: Go arrays are copied by value, so any call to e.g. VrfPrivkey.Prove() makes a copy of the secret key that lingers in memory.
 // To avoid this, should we instead allocate memory for secret keys here (maybe even in the C heap) and pass around pointers?
@@ -72,32 +43,102 @@ type (
 	VrfOutput [64]byte
 )
 
+// deprecated names + wrappers -- TODO remove
+
+// VRFVerifier is a deprecated name for VrfPubkey
+type VRFVerifier = VrfPubkey
+
+// VRFProof is a deprecated name for VrfProof
+type VRFProof = VrfProof
+
+// VRFSecrets is a wrapper for a VRF keypair. Use *VrfPrivkey instead
+type VRFSecrets struct {
+	_struct struct{} `codec:""`
+
+	PK VrfPubkey
+	SK VrfPrivkey
+}
+
+var (
+	useGoImplementation bool
+	implMutex           sync.RWMutex
+)
+
+// SetUseGoImplementation controls whether to use the pure Go implementation (true) or the C/libsodium implementation (false)
+func SetUseGoImplementation(useGo bool) {
+	implMutex.Lock()
+	defer implMutex.Unlock()
+	useGoImplementation = useGo
+}
+
 // VrfKeygenFromSeed deterministically generates a VRF keypair from 32 bytes of (secret) entropy.
 func VrfKeygenFromSeed(seed [32]byte) (pub VrfPubkey, priv VrfPrivkey) {
-	C.crypto_vrf_keypair_from_seed((*C.uchar)(&pub[0]), (*C.uchar)(&priv[0]), (*C.uchar)(&seed[0]))
-	return pub, priv
+	implMutex.RLock()
+	defer implMutex.RUnlock()
+
+	if useGoImplementation {
+		return VrfKeygenFromSeedGo(seed)
+	}
+
+	cPub, cPriv := cgovrf.VrfKeygenFromSeed(seed)
+	copy(pub[:], cPub[:])
+	copy(priv[:], cPriv[:])
+	return
 }
 
 // VrfKeygen generates a random VRF keypair.
 func VrfKeygen() (pub VrfPubkey, priv VrfPrivkey) {
-	C.crypto_vrf_keypair((*C.uchar)(&pub[0]), (*C.uchar)(&priv[0]))
-	return pub, priv
+	implMutex.RLock()
+	defer implMutex.RUnlock()
+
+	if useGoImplementation {
+		// VrfKeygenGo isn't implemented yet, but it can be done by generating a random seed
+		// and calling VrfKeygenFromSeedGo
+		var seed [32]byte
+		_, err := io.ReadFull(rand.Reader, seed[:])
+		if err != nil {
+			panic("crypto/rand failed to generate random bytes")
+		}
+		return VrfKeygenFromSeedGo(seed)
+	}
+
+	cPub, cPriv := cgovrf.VrfKeygen()
+	copy(pub[:], cPub[:])
+	copy(priv[:], cPriv[:])
+	return
 }
 
 // Pubkey returns the public key that corresponds to the given private key.
 func (sk VrfPrivkey) Pubkey() (pk VrfPubkey) {
-	C.crypto_vrf_sk_to_pk((*C.uchar)(&pk[0]), (*C.uchar)(&sk[0]))
-	return pk
+	implMutex.RLock()
+	defer implMutex.RUnlock()
+
+	if useGoImplementation {
+		// Extract the public key part from the private key (it's stored in the second half)
+		copy(pk[:], sk[32:])
+		return
+	}
+
+	var cSk cgovrf.VrfPrivkey
+	copy(cSk[:], sk[:])
+	cPk := cSk.Pubkey()
+	copy(pk[:], cPk[:])
+	return
 }
 
 func (sk VrfPrivkey) proveBytes(msg []byte) (proof VrfProof, ok bool) {
-	// &msg[0] will make Go panic if msg is zero length
-	m := (*C.uchar)(C.NULL)
-	if len(msg) != 0 {
-		m = (*C.uchar)(&msg[0])
+	implMutex.RLock()
+	defer implMutex.RUnlock()
+
+	if useGoImplementation {
+		return sk.proveBytesGo(msg)
 	}
-	ret := C.crypto_vrf_prove((*C.uchar)(&proof[0]), (*C.uchar)(&sk[0]), (*C.uchar)(m), (C.ulonglong)(len(msg)))
-	return proof, ret == 0
+
+	var cSk cgovrf.VrfPrivkey
+	copy(cSk[:], sk[:])
+	cProof, cOk := cSk.ProveBytes(msg)
+	copy(proof[:], cProof[:])
+	return proof, cOk
 }
 
 // Prove constructs a VRF Proof for a given Hashable.
@@ -109,19 +150,33 @@ func (sk VrfPrivkey) Prove(message Hashable) (proof VrfProof, ok bool) {
 // Hash converts a VRF proof to a VRF output without verifying the proof.
 // TODO: Consider removing so that we don't accidentally hash an unverified proof
 func (proof VrfProof) Hash() (hash VrfOutput, ok bool) {
-	ret := C.crypto_vrf_proof_to_hash((*C.uchar)(&hash[0]), (*C.uchar)(&proof[0]))
-	return hash, ret == 0
+	implMutex.RLock()
+	defer implMutex.RUnlock()
+
+	var cProof cgovrf.VrfProof
+	copy(cProof[:], proof[:])
+	cHash, cOk := cProof.Hash()
+	copy(hash[:], cHash[:])
+	return hash, cOk
 }
 
 func (pk VrfPubkey) verifyBytes(proof VrfProof, msg []byte) (bool, VrfOutput) {
-	var out VrfOutput
-	// &msg[0] will make Go panic if msg is zero length
-	m := (*C.uchar)(C.NULL)
-	if len(msg) != 0 {
-		m = (*C.uchar)(&msg[0])
+	implMutex.RLock()
+	defer implMutex.RUnlock()
+
+	if useGoImplementation {
+		return pk.verifyBytesGo(proof, msg)
 	}
-	ret := C.crypto_vrf_verify((*C.uchar)(&out[0]), (*C.uchar)(&pk[0]), (*C.uchar)(&proof[0]), (*C.uchar)(m), (C.ulonglong)(len(msg)))
-	return ret == 0, out
+
+	var cPk cgovrf.VrfPubkey
+	var cProof cgovrf.VrfProof
+	copy(cPk[:], pk[:])
+	copy(cProof[:], proof[:])
+
+	cOk, cOut := cPk.VerifyBytes(cProof, msg)
+	var out VrfOutput
+	copy(out[:], cOut[:])
+	return cOk, out
 }
 
 // validateGoVerify is a temporary helper that allows testing both C and Go VRF implementations (this will be removed before this branch is merged).
@@ -132,7 +187,8 @@ var validateGoVerify func(pk VrfPubkey, p VrfProof, message Hashable, ok bool, o
 // However, given a public key and message, all valid proofs will yield the same output.
 // Moreover, the output is indistinguishable from random to anyone without the proof or the secret key.
 func (pk VrfPubkey) Verify(p VrfProof, message Hashable) (bool, VrfOutput) {
-	ok, out := pk.verifyBytes(p, HashRep(message))
+	msgBytes := HashRep(message)
+	ok, out := pk.verifyBytes(p, msgBytes)
 	// Temporary addition to enable build tag based setting of an implementation to compare C and Go implementations.
 	if validateGoVerify != nil {
 		validateGoVerify(pk, p, message, ok, out)

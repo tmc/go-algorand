@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021 Algorand, Inc.
+// Copyright (C) 2019-2023 Algorand, Inc.
 // This file is part of go-algorand
 //
 // go-algorand is free software: you can redistribute it and/or modify
@@ -14,22 +14,15 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with go-algorand.  If not, see <https://www.gnu.org/licenses/>.
 
-//go:build compare_purego_implementation
-// +build compare_purego_implementation
+// Package cgovrf provides Verifiable Random Function (VRF) implementation using libsodium via CGO.
+// 
+// Building libsodium:
+// To build libsodium, run one of:
+//   - `go generate github.com/tmc/go-algorand/crypto/vrf/internal/cgovrf`
+//   - `cd internal/cgovrf && make`
+//
+// Cleaning build artifacts:
+//   - `cd internal/cgovrf && make clean`
+package cgovrf
 
-package crypto
-
-import "fmt"
-
-func init() {
-	fmt.Println("purego: Compiled with comparison enabled for Verify() implementation.")
-	validateGoVerify = func(pk VrfPubkey, p VrfProof, message Hashable, ok bool, out VrfOutput) {
-		goOk, goOut := pk.verifyBytesGo(p, HashRep(message))
-		if out != goOut {
-			panic(fmt.Sprintf("Go and C implementations differ: %x %x %x %x %x\n", pk, p, message, out, goOut))
-		}
-		if ok != goOk {
-			panic(fmt.Sprintf("Go and C implementations differ: %x %x %x\n", pk, p, message))
-		}
-	}
-}
+//go:generate make -f Makefile build-libsodium

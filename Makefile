@@ -3,7 +3,7 @@
 SRCPATH    := $(shell pwd)
 OS_TYPE    := $(shell uname | tr '[:upper:]' '[:lower:]')
 ARCH       := $(shell uname -m)
-LIBSODIUM_DIR := libsodium-fork
+LIBSODIUM_DIR := vrf/internal/cgovrf/libsodium-fork
 
 # Set up include path and library path for current architecture
 INCLUDE_DIR := $(SRCPATH)/include
@@ -15,7 +15,7 @@ default: build-libsodium
 # Build libsodium and install headers
 build-libsodium:
 	mkdir -p copies/$(OS_TYPE)/$(ARCH)
-	cp -R libsodium-fork/. copies/$(OS_TYPE)/$(ARCH)/libsodium-fork
+	cp -R $(LIBSODIUM_DIR)/. copies/$(OS_TYPE)/$(ARCH)/libsodium-fork
 	cd copies/$(OS_TYPE)/$(ARCH)/libsodium-fork && \
 		./autogen.sh --prefix $(SRCPATH)/libs/$(OS_TYPE)/$(ARCH) && \
 		./configure --disable-shared --prefix="$(SRCPATH)/libs/$(OS_TYPE)/$(ARCH)" $(EXTRA_CONFIGURE_FLAGS) && \

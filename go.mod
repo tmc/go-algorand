@@ -1,4 +1,4 @@
-module github.com/algorand/go-algorand-crypto
+module github.com/tmc/go-algorand/crypto
 
 go 1.23.4
 
